@@ -1,0 +1,17 @@
+{
+  "name": "@kaizocore/sdk",
+  "version": "1.0.0",
+  "description": "KaizoCore browser SDK — bot detection for Indian platforms",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.js"
+  },
+  "keywords": ["bot-detection", "antibot", "fraud-prevention", "india"],
+  "license": "MIT",
+  "homepage": "https://kaizocore.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kaizocore/sdk.git"
+  }
+}

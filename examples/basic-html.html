@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>KaizoCore SDK — Basic Example</title>
+
+  <!--
+    STEP 1: Add this one script tag to your <head>.
+    Replace pk_live_YOUR_KEY with the key from app.kaizocore.com/api-keys
+  -->
+  <script src="https://cdn.kaizocore.com/l.js?k=pk_live_YOUR_KEY" defer></script>
+</head>
+<body>
+  <h1>Checkout</h1>
+  <button id="checkout-btn">Place Order</button>
+
+  <script>
+    document.getElementById('checkout-btn').addEventListener('click', async function() {
+      // STEP 2: Wait for the SDK to settle before the action
+      await window.__kz.settle({ minHeartbeats: 1 });
+
+      const sessionToken = window.__kz.getToken();
+
+      // STEP 3: Send the session token to YOUR backend
+      const res = await fetch('/api/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_token: sessionToken,
+          // ... your order data
+        }),
+      });
+      const data = await res.json();
+      alert(data.message);
+    });
+  </script>
+</body>
+</html>
