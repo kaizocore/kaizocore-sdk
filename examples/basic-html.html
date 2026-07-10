@@ -2,37 +2,236 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>KaizoCore SDK — Basic Example</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KaizoCore SDK — Integration Examples</title>
 
   <!--
-    STEP 1: Add this one script tag to your <head>.
-    Replace pk_live_YOUR_KEY with the key from app.kaizocore.com/api-keys
+    ╔══════════════════════════════════════════════════════════════╗
+    ║  STEP 1 (all modes): Add this one script tag to your <head> ║
+    ║  Replace pk_live_xxx with your key from app.kaizocore.com   ║
+    ╚══════════════════════════════════════════════════════════════╝
+
+    The protection MODE is configured per-site in your dashboard (Settings page).
+    You don't change the script tag — the mode is served from the CDN.
+
+    Three modes:
+      FORGE   — full challenge + PoW (~600ms). Use for: checkout, login, signup, OTP, payment.
+      AMBIENT — passive signals only (~50ms). Use for: browse pages, content APIs, search.
+      PULSE   — FORGE + heartbeat every 4s. Use for: ticket queues, auctions, long sessions.
   -->
-  <script src="https://cdn.kaizocore.com/l.js?k=pk_live_YOUR_KEY" defer></script>
+  <script src="https://cdn.kaizocore.com/l.js?k=pk_live_xxx" defer></script>
+
+  <style>
+    body { font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 0 20px; }
+    h2   { margin-top: 2em; }
+    button { padding: 10px 20px; font-size: 16px; cursor: pointer; }
+    .note { background: #f5f5f5; padding: 12px 16px; border-left: 4px solid #0066cc; margin: 16px 0; }
+  </style>
 </head>
 <body>
-  <h1>Checkout</h1>
+
+  <h1>KaizoCore — Frontend examples</h1>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       MODE 1: FORGE — checkout, login, signup, payment, OTP
+       ═══════════════════════════════════════════════════════════════════════
+
+    FORGE runs a hardware challenge + proof-of-work. It takes ~600ms.
+    You MUST await window.__kz.settle() before the protected action.
+
+    The kz_st cookie is set automatically by c.js on your domain.
+    Your backend reads it from the Cookie header — no JS token passing needed
+    for same-origin requests.
+  -->
+  <h2>FORGE — Checkout (await settle before submitting)</h2>
+  <div class="note">
+    Use FORGE for: checkout, login, signup, payment, OTP verify, coupon apply.
+    The ~600ms challenge runs in the background while the user fills out the form.
+    By the time they click "Place Order", settle() resolves instantly.
+  </div>
   <button id="checkout-btn">Place Order</button>
 
   <script>
-    document.getElementById('checkout-btn').addEventListener('click', async function() {
-      // STEP 2: Wait for the SDK to settle before the action
-      await window.__kz.settle({ minHeartbeats: 1 });
+    document.getElementById('checkout-btn').addEventListener('click', async function () {
+      const btn = this;
+      btn.disabled = true;
+      btn.textContent = 'Verifying...';
 
-      const sessionToken = window.__kz.getToken();
+      try {
+        // ✅ CORRECT: await settle() BEFORE the protected fetch.
+        // The kz_st cookie will be set by the time this resolves.
+        await window.__kz.settle();
 
-      // STEP 3: Send the session token to YOUR backend
-      const res = await fetch('/api/checkout', {
+        // For same-origin requests, the browser sends kz_st automatically.
+        // Your backend reads it from req.cookies['kz_st'] — no token in the body needed.
+        const res = await fetch('/api/checkout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: ['item_1'], total: 999 }),
+          // credentials: 'include' is required for cross-origin requests only
+        });
+
+        if (res.status === 403) {
+          const data = await res.json();
+          if (data.action === 'challenge_required') {
+            alert('Please complete 2FA to proceed.');
+          } else {
+            alert('Request blocked. Please try again later.');
+          }
+          return;
+        }
+
+        const data = await res.json();
+        alert(`Order placed! ID: ${data.order_id}`);
+      } catch (err) {
+        console.error('Checkout error:', err);
+        alert('Something went wrong. Please try again.');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Place Order';
+      }
+    });
+  </script>
+
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       MODE 1: FORGE — Login form
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <h2>FORGE — Login</h2>
+  <form id="login-form">
+    <input type="email" name="email" placeholder="email@example.com" required>
+    <input type="password" name="password" placeholder="Password" required>
+    <button type="submit">Log in</button>
+  </form>
+
+  <script>
+    document.getElementById('login-form').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      const btn = this.querySelector('button[type=submit]');
+      btn.disabled = true;
+
+      // ✅ await settle() before submitting credentials
+      await window.__kz.settle();
+
+      const res = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          session_token: sessionToken,
-          // ... your order data
+          email:    this.email.value,
+          password: this.password.value,
         }),
       });
-      const data = await res.json();
-      alert(data.message);
+
+      btn.disabled = false;
+      if (res.ok) {
+        window.location.href = '/dashboard';
+      } else {
+        alert('Login failed.');
+      }
     });
   </script>
+
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       MODE 2: AMBIENT — browse pages, content APIs, search
+       ═══════════════════════════════════════════════════════════════════════
+
+    AMBIENT is passive — it collects signals in the background (~50ms).
+    You do NOT need to call settle(). The kz_st cookie is set quickly.
+    Just make your request normally and let the backend call /v1/decide.
+
+    Use AMBIENT for: page views, search queries, content API calls, product listings.
+  -->
+  <h2>AMBIENT — Search (no settle needed)</h2>
+  <div class="note">
+    For AMBIENT mode, no settle() call is needed. The SDK collects passive signals
+    in the background and the kz_st cookie is set within ~50ms of page load.
+    Just make your fetch — the cookie is already there.
+  </div>
+  <input type="text" id="search-input" placeholder="Search products...">
+  <button id="search-btn">Search</button>
+
+  <script>
+    document.getElementById('search-btn').addEventListener('click', async function () {
+      const q = document.getElementById('search-input').value;
+
+      // ✅ CORRECT for AMBIENT: no settle() needed. Cookie is already set.
+      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+      const data = await res.json();
+      console.log('Search results:', data);
+    });
+  </script>
+
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       MODE 3: PULSE — ticket queues, auctions, long sessions
+       ═══════════════════════════════════════════════════════════════════════
+
+    PULSE runs FORGE up front, then sends a heartbeat every 4 seconds to
+    prove the user is still present. Use minHeartbeats to require proof that
+    the user has been actively present for N heartbeat cycles.
+
+    Use PULSE for: ticket booking queues, flash sales, live auctions,
+    anything where bots join early and wait.
+  -->
+  <h2>PULSE — Ticket booking (require heartbeats)</h2>
+  <div class="note">
+    PULSE emits a heartbeat every 4s. By requiring minHeartbeats: 3 before
+    booking, you ensure the user was genuinely present for ~12 seconds —
+    filtering bots that joined the queue programmatically at open.
+  </div>
+  <button id="book-ticket-btn">Book Ticket (PULSE queue)</button>
+
+  <script>
+    document.getElementById('book-ticket-btn').addEventListener('click', async function () {
+      const btn = this;
+      btn.disabled = true;
+      btn.textContent = 'Verifying presence...';
+
+      try {
+        // For PULSE: require N heartbeats to prove genuine human presence.
+        // With heartbeats every 4s, minHeartbeats: 3 = ~12s of verified presence.
+        await window.__kz.settle({ minHeartbeats: 3, timeoutMs: 20000 });
+
+        const res = await fetch('/api/book-ticket', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ eventId: 'evt_123', quantity: 2 }),
+        });
+
+        const data = await res.json();
+        alert(`Booking confirmed! Reference: ${data.booking_ref}`);
+      } catch (err) {
+        // settle() rejects if minHeartbeats not reached within timeoutMs
+        alert('Could not verify your session. Please stay on the page and try again.');
+        console.error('PULSE settle error:', err);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Book Ticket (PULSE queue)';
+      }
+    });
+  </script>
+
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       Diagnostic helper — check SDK state
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <h2>Diagnostics</h2>
+  <button id="state-btn">Check SDK State</button>
+  <pre id="state-output"></pre>
+
+  <script>
+    document.getElementById('state-btn').addEventListener('click', function () {
+      if (!window.__kz) {
+        document.getElementById('state-output').textContent = 'window.__kz not yet available — script may still be loading';
+        return;
+      }
+      document.getElementById('state-output').textContent = JSON.stringify({
+        state:    window.__kz.getState(),
+        deviceId: window.__kz.getDeviceId(),
+      }, null, 2);
+    });
+  </script>
+
 </body>
 </html>

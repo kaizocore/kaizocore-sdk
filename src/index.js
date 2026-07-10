@@ -1,14 +1,13 @@
 /**
- * KaizoCore SDK — client-side loader
+ * KaizoCore SDK — client-side loader (npm / bundler usage)
  *
- * Usage (HTML):
- *   <script src="https://cdn.kaizocore.com/l.js?k=pk_live_YOUR_KEY" defer></script>
+ * For most sites, the plain script tag is all you need:
+ *   <script src="https://cdn.kaizocore.com/l.js?k=pk_live_xxx" defer></script>
  *
- * Usage (npm / bundler):
+ * Use this module when you need programmatic control from a bundler:
  *   import { KaizoCore } from '@kaizocore/sdk'
- *   const kz = new KaizoCore({ apiKey: 'pk_live_YOUR_KEY' })
- *   await kz.boot()
- *   const token = kz.getToken()
+ *   const kz = new KaizoCore({ apiKey: 'pk_live_xxx' })
+ *   await kz.settle()
  */
 
 const CDN_URL = 'https://cdn.kaizocore.com';
@@ -20,88 +19,86 @@ export class KaizoCore {
     }
     this._key = apiKey;
     this._cdn = cdnUrl;
-    this._token = null;
-    this._state = 'IDLE';
+    this._scriptLoading = null;
   }
 
   /**
-   * boot() — loads the obfuscated collector script and runs the full FORGE flow.
-   * Returns a Promise that resolves once the session token is ready.
+   * _loadScript() — injects l.js into the page if it hasn't been loaded yet.
+   * Idempotent: calling it multiple times returns the same Promise.
    */
-  async boot() {
-    if (this._state !== 'IDLE') return;
-    this._state = 'LOADING';
+  _loadScript() {
+    if (this._scriptLoading) return this._scriptLoading;
 
-    return new Promise((resolve, reject) => {
+    this._scriptLoading = new Promise((resolve, reject) => {
+      // Don't inject twice if the tag is already in the DOM
+      const existing = document.querySelector(
+        `script[src*="${this._cdn}/l.js"]`
+      );
+      if (existing && window.__kz) {
+        resolve();
+        return;
+      }
+
       const script = document.createElement('script');
       script.src = `${this._cdn}/l.js?k=${encodeURIComponent(this._key)}`;
       script.async = true;
-      script.onload = () => {
-        // l.js bootstraps window.__kz — wait for it to settle
-        const poll = setInterval(() => {
-          if (window.__kz && window.__kz.getToken()) {
-            clearInterval(poll);
-            this._token = window.__kz.getToken();
-            this._state = 'READY';
-            resolve(this._token);
-          }
-        }, 100);
-        // Timeout after 10s
-        setTimeout(() => {
-          clearInterval(poll);
-          if (this._state !== 'READY') {
-            this._state = 'ERROR';
-            reject(new Error('KaizoCore: boot timed out'));
-          }
-        }, 10000);
-      };
+      script.onload = () => resolve();
       script.onerror = () => {
-        this._state = 'ERROR';
-        reject(new Error('KaizoCore: failed to load SDK script'));
+        this._scriptLoading = null; // allow retry
+        reject(new Error('KaizoCore: failed to load SDK script from CDN'));
       };
       document.head.appendChild(script);
     });
+
+    return this._scriptLoading;
   }
 
   /**
    * settle(options) — waits for the session to reach a verified state.
-   * Call this before a protected action (login, checkout, payment).
    *
-   * @param {Object} options
-   * @param {number} [options.minHeartbeats=1] - minimum PULSE heartbeats required
-   * @param {number} [options.timeoutMs=8000]  - max wait in ms
+   * ALWAYS await this before a protected action (login, checkout, payment, OTP).
+   * The underlying challenge takes ~600ms for FORGE mode. Skipping settle() is
+   * the #1 integration mistake — the kz_st cookie will not be set yet.
+   *
+   * @param {Object}  [options]
+   * @param {number}  [options.minHeartbeats=1] - min PULSE heartbeats required (PULSE mode only)
+   * @param {number}  [options.timeoutMs=8000]  - max wait in milliseconds
+   * @returns {Promise<void>}
    */
   async settle({ minHeartbeats = 1, timeoutMs = 8000 } = {}) {
-    if (window.__kz) {
-      return window.__kz.settle({ minHeartbeats, timeoutMs });
-    }
-    // If SDK not yet loaded, boot first
-    await this.boot();
-    return this.settle({ minHeartbeats, timeoutMs });
+    if (!window.__kz) await this._loadScript();
+    return window.__kz.settle({ minHeartbeats, timeoutMs });
   }
 
-  /** Returns the current session token, or null if not yet collected. */
-  getToken() {
-    return this._token || (window.__kz ? window.__kz.getToken() : null);
-  }
-
-  /** Returns the current SDK state string. */
+  /**
+   * getState() — returns the current SDK state from the underlying c.js runner.
+   *
+   * Possible values: 'IDLE' | 'LOADING' | 'SOLVING' | 'READY' | 'ERROR'
+   *
+   * @returns {string}
+   */
   getState() {
-    return window.__kz ? window.__kz.getState() : this._state;
+    return window.__kz ? window.__kz.getState() : 'IDLE';
   }
 
-  /** Returns the device ID assigned to this browser. */
+  /**
+   * getDeviceId() — returns the stable device ID assigned to this browser.
+   * Persisted in localStorage across sessions.
+   *
+   * @returns {string|null}
+   */
   getDeviceId() {
     return window.__kz ? window.__kz.getDeviceId() : null;
   }
 }
 
-// Auto-init if data-key attribute present on the script tag
+// Auto-init if data-key attribute is present on the script tag itself
+// e.g. <script src="..." data-key="pk_live_xxx">
 if (typeof document !== 'undefined') {
   const me = document.currentScript;
   if (me && me.dataset.key) {
     const kz = new KaizoCore({ apiKey: me.dataset.key });
-    kz.boot().catch(() => {});
+    kz._loadScript().catch(() => {});
     window.__kaizocore = kz;
   }
 }
