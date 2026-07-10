@@ -4,6 +4,10 @@
   "description": "KaizoCore browser SDK — bot detection for Indian platforms",
   "main": "src/index.js",
   "type": "module",
+  "exports": {
+    ".": "./src/index.js",
+    "./server": "./src/server.js"
+  },
   "scripts": {
     "build": "node scripts/build.js"
   },
